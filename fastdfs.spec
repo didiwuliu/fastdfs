@@ -1,8 +1,10 @@
 %define FastDFS    fastdfs
 %define FDFSServer fastdfs-server
 %define FDFSClient libfdfsclient
+%define FDFSClientDevel libfdfsclient-devel
 %define FDFSTool   fastdfs-tool
-%define FDFSVersion 5.0.8
+%define FDFSVersion 5.0.11
+%define CommitVersion %(echo $COMMIT_VERSION)
 
 Name: %{FastDFS}
 Version: %{FDFSVersion}
@@ -16,13 +18,14 @@ Source: http://perso.orange.fr/sebastien.godard/%{name}-%{version}.tar.gz
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n) 
 
 Requires: %__cp %__mv %__chmod %__grep %__mkdir %__install %__id
-BuildRequires: libfastcommon-devel >= 1.0.24
+BuildRequires: libfastcommon-devel >= 1.0.36
 
 %description
 This package provides tracker & storage of fastdfs
+commit version: %{CommitVersion}
 
 %package -n %{FDFSServer}
-Requires: libfastcommon >= 1.0.24
+Requires: libfastcommon >= 1.0.36
 Summary: fastdfs tracker & storage
 
 %package -n %{FDFSTool}
@@ -39,15 +42,19 @@ Summary: The client header of fastdfs
 
 %description -n %{FDFSServer}
 This package provides tracker & storage of fastdfs
+commit version: %{CommitVersion}
 
 %description -n %{FDFSClient}
 This package is client dynamic library of fastdfs
+commit version: %{CommitVersion}
 
 %description -n %{FDFSClient}-devel
 This package is client header of fastdfs client
+commit version: %{CommitVersion}
 
 %description -n %{FDFSTool}
 This package is tools for fastdfs
+commit version: %{CommitVersion}
 
 %prep
 %setup -q
@@ -94,9 +101,11 @@ DESTDIR=$RPM_BUILD_ROOT ./make.sh install
 /etc/init.d/*
 /etc/fdfs/tracker.conf.sample
 /etc/fdfs/storage.conf.sample
+/etc/fdfs/storage_ids.conf.sample
 
 %files -n %{FDFSClient}
 /usr/lib64/libfdfsclient*
+/usr/lib/libfdfsclient*
 /etc/fdfs/client.conf.sample
 
 %files -n %{FDFSClient}-devel

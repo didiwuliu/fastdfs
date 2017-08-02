@@ -56,7 +56,7 @@ static int tracker_report_sync_timestamp(ConnectionInfo *pTrackerServer, \
 
 static int tracker_sync_dest_req(ConnectionInfo *pTrackerServer);
 static int tracker_sync_dest_query(ConnectionInfo *pTrackerServer);
-static int tracker_sync_notify(ConnectionInfo *pTrackerServer);
+static int tracker_sync_notify(ConnectionInfo *pTrackerServer, const int tracker_index);
 static int tracker_storage_changelog_req(ConnectionInfo *pTrackerServer);
 static int tracker_report_trunk_fid(ConnectionInfo *pTrackerServer);
 static int tracker_fetch_trunk_fid(ConnectionInfo *pTrackerServer);
@@ -401,7 +401,7 @@ static void *tracker_report_thread_entrance(void *arg)
 			}
 			else
 			{
-				if (tracker_sync_notify(pTrackerServer) != 0)
+				if (tracker_sync_notify(pTrackerServer, tracker_index) != 0)
 				{
 					pthread_mutex_unlock( \
 						&reporter_thread_lock);
@@ -424,7 +424,7 @@ static void *tracker_report_thread_entrance(void *arg)
 		}
 
 		src_storage_status[tracker_index] = \
-					tracker_sync_notify(pTrackerServer);
+					tracker_sync_notify(pTrackerServer, tracker_index);
 		if (src_storage_status[tracker_index] != 0)
 		{
 			int k;
@@ -1034,6 +1034,9 @@ static int _notify_reselect_tleader(ConnectionInfo *pTrackerServer)
 
 	if ((result=fdfs_recv_header(pTrackerServer, &in_bytes)) != 0)
 	{
+		logError("file: "__FILE__", line: %d, "
+                "fdfs_recv_header fail, result: %d",
+                __LINE__, result);
 		return result;
 	}
 
@@ -1097,6 +1100,31 @@ static void set_tracker_leader(const int leader_index)
         }
     }
 	g_tracker_group.leader_index = leader_index;
+}
+
+static void get_tracker_leader()
+{
+    int i;
+    TrackerRunningStatus tracker_status;
+    ConnectionInfo tracker_server;
+
+    for (i=0; i<g_tracker_group.server_count; i++)
+    {
+        memcpy(&tracker_server, g_tracker_group.servers + i,
+                sizeof(ConnectionInfo));
+        if (fdfs_get_tracker_status(&tracker_server, &tracker_status) == 0)
+        {
+            if (tracker_status.if_leader)
+            {
+                g_tracker_group.leader_index = i;
+                logInfo("file: "__FILE__", line: %d, "
+                        "the tracker server leader is #%d. %s:%d",
+                        __LINE__, i, tracker_server.ip_addr,
+                        tracker_server.port);
+                break;
+            }
+        }
+    }
 }
 
 static int tracker_check_response(ConnectionInfo *pTrackerServer, \
@@ -1472,6 +1500,9 @@ int tracker_sync_src_req(ConnectionInfo *pTrackerServer, \
 	if ((result=fdfs_recv_response(pTrackerServer, \
                 &pBuff, sizeof(syncReqbody), &in_bytes)) != 0)
 	{
+		logError("file: "__FILE__", line: %d, "
+                "fdfs_recv_response fail, result: %d",
+                __LINE__, result);
 		return result;
 	}
 
@@ -1531,6 +1562,9 @@ static int tracker_sync_dest_req(ConnectionInfo *pTrackerServer)
 	if ((result=fdfs_recv_response(pTrackerServer, \
                 &pBuff, sizeof(syncReqbody), &in_bytes)) != 0)
 	{
+		logError("file: "__FILE__", line: %d, "
+                "fdfs_recv_response fail, result: %d",
+                __LINE__, result);
 		return result;
 	}
 
@@ -1585,6 +1619,9 @@ static int tracker_sync_dest_query(ConnectionInfo *pTrackerServer)
 	if ((result=fdfs_recv_response(pTrackerServer, \
                 &pBuff, sizeof(syncReqbody), &in_bytes)) != 0)
 	{
+		logError("file: "__FILE__", line: %d, "
+                "fdfs_recv_response fail, result: %d",
+                __LINE__, result);
 		return result;
 	}
 
@@ -1642,6 +1679,9 @@ static int tracker_report_trunk_fid(ConnectionInfo *pTrackerServer)
 
 	if ((result=fdfs_recv_header(pTrackerServer, &in_bytes)) != 0)
 	{
+		logError("file: "__FILE__", line: %d, "
+                "fdfs_recv_header fail, result: %d",
+                __LINE__, result);
 		return result;
 	}
 
@@ -1685,6 +1725,9 @@ static int tracker_report_trunk_free_space(ConnectionInfo *pTrackerServer)
 
 	if ((result=fdfs_recv_header(pTrackerServer, &in_bytes)) != 0)
 	{
+		logError("file: "__FILE__", line: %d, "
+                "fdfs_recv_header fail, result: %d",
+                __LINE__, result);
 		return result;
 	}
 
@@ -1730,6 +1773,9 @@ static int tracker_fetch_trunk_fid(ConnectionInfo *pTrackerServer)
 	if ((result=fdfs_recv_response(pTrackerServer, \
 		&pInBuff, sizeof(in_buff), &in_bytes)) != 0)
 	{
+		logError("file: "__FILE__", line: %d, "
+                "fdfs_recv_response fail, result: %d",
+                __LINE__, result);
 		return result;
 	}
 
@@ -1768,7 +1814,7 @@ static int tracker_fetch_trunk_fid(ConnectionInfo *pTrackerServer)
 	return 0;
 }
 
-static int tracker_sync_notify(ConnectionInfo *pTrackerServer)
+static int tracker_sync_notify(ConnectionInfo *pTrackerServer, const int tracker_index)
 {
 	char out_buff[sizeof(TrackerHeader)+sizeof(TrackerStorageSyncReqBody)];
 	TrackerHeader *pHeader;
@@ -1798,9 +1844,32 @@ static int tracker_sync_notify(ConnectionInfo *pTrackerServer)
 	}
 
 	if ((result=fdfs_recv_header(pTrackerServer, &in_bytes)) != 0)
-	{
-		return result;
-	}
+    {
+        if (result == ENOENT)
+        {
+            if (g_tracker_group.leader_index == -1)
+            {
+                get_tracker_leader();
+            }
+
+            if (tracker_index == g_tracker_group.leader_index)
+            {
+                logWarning("file: "__FILE__", line: %d, "
+                        "clear sync src id: %s because "
+                        "tracker leader response ENOENT",
+                        __LINE__, g_sync_src_id);
+                *g_sync_src_id = '\0';
+                storage_write_to_sync_ini_file();
+            }
+        }
+        if (result != 0 && result != ENOENT)
+        {
+            logError("file: "__FILE__", line: %d, "
+                    "fdfs_recv_header fail, result: %d",
+                    __LINE__, result);
+            return result;
+        }
+    }
 
 	if (in_bytes != 0)
 	{
@@ -1812,7 +1881,7 @@ static int tracker_sync_notify(ConnectionInfo *pTrackerServer)
 		return EINVAL;
 	}
 
-	return 0;
+    return result;
 }
 
 int tracker_report_join(ConnectionInfo *pTrackerServer, \
@@ -1871,8 +1940,12 @@ int tracker_report_join(ConnectionInfo *pTrackerServer, \
 		{
 			for (i=0; i<g_tracker_group.server_count; i++)
 			{
-				if (my_report_status[i] != EFAULT)
+				if (my_report_status[i] == -1)
 				{
+                    logInfo("file: "__FILE__", line: %d, "
+                            "tracker server: #%d. %s:%d, my_report_status: %d",
+                            __LINE__, i, g_tracker_group.servers[i].ip_addr,
+                            g_tracker_group.servers[i].port, my_report_status[i]);
 					break;
 				}
 			}
@@ -1932,6 +2005,9 @@ int tracker_report_join(ConnectionInfo *pTrackerServer, \
 	my_report_status[tracker_index] = result;
 	if (result != 0)
 	{
+		logError("file: "__FILE__", line: %d, "
+                "fdfs_recv_response fail, result: %d",
+                __LINE__, result);
 		return result;
 	}
 
@@ -1950,7 +2026,7 @@ int tracker_report_join(ConnectionInfo *pTrackerServer, \
 
 	if (*(respBody.src_id) == '\0' && *g_sync_src_id != '\0')
 	{
-		return tracker_sync_notify(pTrackerServer);
+		return tracker_sync_notify(pTrackerServer, tracker_index);
 	}
 	else
 	{
@@ -2296,6 +2372,9 @@ int tracker_deal_changelog_response(ConnectionInfo *pTrackerServer)
 			&pInBuff, 0, &nInPackLen);
 	if (result != 0)
 	{
+		logError("file: "__FILE__", line: %d, "
+                "fdfs_recv_response fail, result: %d",
+                __LINE__, result);
 		return result;
 	}
 

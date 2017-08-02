@@ -153,6 +153,9 @@ static int storage_do_get_group_name(ConnectionInfo *pTrackerServer)
 	if ((result=fdfs_recv_response(pTrackerServer, \
 		&pInBuff, FDFS_GROUP_NAME_MAX_LEN, &in_bytes)) != 0)
 	{
+		logError("file: "__FILE__", line: %d, "
+                "fdfs_recv_response fail, result: %d",
+                __LINE__, result);
 		return result;
 	}
 
@@ -293,7 +296,7 @@ int storage_write_to_fd(int fd, get_filename_func filename_func, \
 		return errno != 0 ? errno : ENOENT;
 	}
 
-	if (write(fd, buff, len) != len)
+	if (fc_safe_write(fd, buff, len) != len)
 	{
 		logError("file: "__FILE__", line: %d, " \
 			"write to file \"%s\" fail, " \
@@ -657,7 +660,7 @@ int storage_write_to_sync_ini_file()
 		INIT_ITEM_CURRENT_TRUNK_FILE_ID, g_current_trunk_file_id, \
 		INIT_ITEM_TRUNK_LAST_COMPRESS_TIME, (int)g_trunk_last_compress_time
 	    );
-	if (write(fd, buff, len) != len)
+	if (fc_safe_write(fd, buff, len) != len)
 	{
 		logError("file: "__FILE__", line: %d, " \
 			"write to file \"%s\" fail, " \
@@ -1036,6 +1039,14 @@ static int storage_load_paths(IniContext *pItemContext)
 	}
 	memset(g_path_space_list, 0, bytes);
 	return 0;
+}
+
+void storage_set_access_log_header(struct log_context *pContext)
+{
+#define STORAGE_ACCESS_HEADER_STR "client_ip action filename status time_used_ms req_len resp_len"
+#define STORAGE_ACCESS_HEADER_LEN (sizeof(STORAGE_ACCESS_HEADER_STR) - 1)
+
+    log_header(pContext, STORAGE_ACCESS_HEADER_STR, STORAGE_ACCESS_HEADER_LEN);
 }
 
 int storage_func_init(const char *filename, \
@@ -1652,6 +1663,7 @@ int storage_func_init(const char *filename, \
 			{
 				break;
 			}
+            log_set_header_callback(&g_access_log_context, storage_set_access_log_header);
 		}
 	
 		g_rotate_access_log = iniGetBoolValue(NULL, "rotate_access_log",\
@@ -2019,7 +2031,7 @@ int write_serialized(int fd, const char *buff, size_t count, const bool bSync)
 			__LINE__, result, STRERROR(result));
 	}
 
-	if (write(fd, buff, count) == count)
+	if (fc_safe_write(fd, buff, count) == count)
 	{
 		if (bSync && fsync(fd) != 0)
 		{

@@ -249,6 +249,9 @@ static int storage_sync_copy_file(ConnectionInfo *pStorageServer, \
 		if ((result=fdfs_recv_response(pStorageServer, \
 			&pBuff, 0, &in_bytes)) != 0)
 		{
+            logError("file: "__FILE__", line: %d, "
+                    "fdfs_recv_response fail, result: %d",
+                    __LINE__, result);
 			break;
 		}
 	} while (0);
@@ -442,6 +445,9 @@ static int storage_sync_modify_file(ConnectionInfo *pStorageServer, \
 		if ((result=fdfs_recv_response(pStorageServer, \
 			&pBuff, 0, &in_bytes)) != 0)
 		{
+            logError("file: "__FILE__", line: %d, "
+                    "fdfs_recv_response fail, result: %d",
+                    __LINE__, result);
 			break;
 		}
 	} while (0);
@@ -590,6 +596,9 @@ static int storage_sync_truncate_file(ConnectionInfo *pStorageServer, \
 		if ((result=fdfs_recv_response(pStorageServer, \
 			&pBuff, 0, &in_bytes)) != 0)
 		{
+            logError("file: "__FILE__", line: %d, "
+                    "fdfs_recv_response fail, result: %d",
+                    __LINE__, result);
 			break;
 		}
 	} while (0);
@@ -658,10 +667,19 @@ static int storage_sync_delete_file(ConnectionInfo *pStorageServer, \
 
 	pBuff = in_buff;
 	result = fdfs_recv_response(pStorageServer, &pBuff, 0, &in_bytes);
-	if (result == ENOENT)
-	{
-		result = 0;
-	}
+    if (result != 0)
+    {
+        if (result == ENOENT)
+        {
+            result = 0;
+        }
+        else
+        {
+            logError("file: "__FILE__", line: %d, "
+                    "fdfs_recv_response fail, result: %d",
+                    __LINE__, result);
+        }
+    }
 	
 	return result;
 }
@@ -698,7 +716,14 @@ static int storage_report_my_server_id(ConnectionInfo *pStorageServer)
 	}
 
 	pBuff = in_buff;
-	return fdfs_recv_response(pStorageServer, &pBuff, 0, &in_bytes);
+	result = fdfs_recv_response(pStorageServer, &pBuff, 0, &in_bytes);
+    if (result != 0)
+    {
+        logError("file: "__FILE__", line: %d, "
+                "fdfs_recv_response fail, result: %d",
+                __LINE__, result);
+    }
+    return result;
 }
 
 /**
@@ -917,10 +942,19 @@ static int storage_sync_link_file(ConnectionInfo *pStorageServer, \
 
 	pBuff = in_buff;
 	result = fdfs_recv_response(pStorageServer, &pBuff, 0, &in_bytes);
-	if (result == ENOENT)
-	{
-		result = 0;
-	}
+    if (result != 0)
+    {
+        if (result == ENOENT)
+        {
+            result = 0;
+        }
+        else
+        {
+            logError("file: "__FILE__", line: %d, "
+                    "fdfs_recv_response fail, result: %d",
+                    __LINE__, result);
+        }
+    }
 	
 	return result;
 }
@@ -1060,7 +1094,7 @@ static int write_to_binlog_index(const int binlog_index)
 	}
 
 	len = sprintf(buff, "%d", binlog_index);
-	if (write(fd, buff, len) != len)
+	if (fc_safe_write(fd, buff, len) != len)
 	{
 		logError("file: "__FILE__", line: %d, " \
 			"write to file \"%s\" fail, " \
@@ -1206,7 +1240,7 @@ int storage_sync_init()
 			"%s/%s", sync_path, SYNC_BINLOG_INDEX_FILENAME);
 	if ((fd=open(full_filename, O_RDONLY)) >= 0)
 	{
-		bytes = read(fd, file_buff, sizeof(file_buff) - 1);
+		bytes = fc_safe_read(fd, file_buff, sizeof(file_buff) - 1);
 		close(fd);
 		if (bytes <= 0)
 		{
@@ -1369,7 +1403,7 @@ static int storage_binlog_fsync(const bool bNeedLock)
 	{
 		write_ret = 0;  //skip
 	}
-	else if (write(g_binlog_fd, binlog_write_cache_buff, \
+	else if (fc_safe_write(g_binlog_fd, binlog_write_cache_buff, \
 		binlog_write_cache_len) != binlog_write_cache_len)
 	{
 		logError("file: "__FILE__", line: %d, " \
@@ -2163,7 +2197,7 @@ static int storage_binlog_preread(StorageBinLogReader *pReader)
 		pReader->binlog_buff.current = pReader->binlog_buff.buffer;
 	}
 
-	bytes_read = read(pReader->binlog_fd, pReader->binlog_buff.buffer \
+	bytes_read = fc_safe_read(pReader->binlog_fd, pReader->binlog_buff.buffer \
 		+ pReader->binlog_buff.length, \
 		STORAGE_BINLOG_BUFFER_SIZE - pReader->binlog_buff.length);
 	if (bytes_read < 0)

@@ -255,41 +255,39 @@ int dio_open_file(StorageFileContext *pFileContext)
 {
 	int result;
 
-	if (pFileContext->fd >= 0)
-	{
-		return 0;
-	}
-
-	pFileContext->fd = open(pFileContext->filename, 
-				pFileContext->open_flags, 0644);
 	if (pFileContext->fd < 0)
-	{
-		result = errno != 0 ? errno : EACCES;
-		logError("file: "__FILE__", line: %d, " \
-			"open file: %s fail, " \
-			"errno: %d, error info: %s", \
-			__LINE__, pFileContext->filename, \
-			result, STRERROR(result));
-	}
-	else
-	{
-		result = 0;
-	}
+    {
+        pFileContext->fd = open(pFileContext->filename,
+                pFileContext->open_flags, 0644);
+        if (pFileContext->fd < 0)
+        {
+            result = errno != 0 ? errno : EACCES;
+            logError("file: "__FILE__", line: %d, " \
+                    "open file: %s fail, " \
+                    "errno: %d, error info: %s", \
+                    __LINE__, pFileContext->filename, \
+                    result, STRERROR(result));
+        }
+        else
+        {
+            result = 0;
+        }
 
-	pthread_mutex_lock(&g_dio_thread_lock);
-	g_storage_stat.total_file_open_count++;
-	if (result == 0)
-	{
-		g_storage_stat.success_file_open_count++;
-	}
-	pthread_mutex_unlock(&g_dio_thread_lock);
+        pthread_mutex_lock(&g_dio_thread_lock);
+        g_storage_stat.total_file_open_count++;
+        if (result == 0)
+        {
+            g_storage_stat.success_file_open_count++;
+        }
+        pthread_mutex_unlock(&g_dio_thread_lock);
 
-	if (result != 0)
-	{
-		return result;
-	}
+        if (result != 0)
+        {
+            return result;
+        }
+    }
 
-	if (pFileContext->offset > 0 && lseek(pFileContext->fd, \
+	if (pFileContext->offset > 0 && lseek(pFileContext->fd,
 		pFileContext->offset, SEEK_SET) < 0)
 	{
 		result = errno != 0 ? errno : EIO;
@@ -331,7 +329,7 @@ int dio_read_file(struct fast_task_info *pTask)
 		read_bytes, pTask->length, pFileContext->offset);
 	*/
 
-	if (read(pFileContext->fd, pTask->data + pTask->length, \
+	if (fc_safe_read(pFileContext->fd, pTask->data + pTask->length, \
 		read_bytes) != read_bytes)
 	{
 		result = errno != 0 ? errno : EIO;
@@ -424,7 +422,7 @@ int dio_write_file(struct fast_task_info *pTask)
 
 	pDataBuff = pTask->data + pFileContext->buff_offset;
 	write_bytes = pTask->length - pFileContext->buff_offset;
-	if (write(pFileContext->fd, pDataBuff, write_bytes) != write_bytes)
+	if (fc_safe_write(pFileContext->fd, pDataBuff, write_bytes) != write_bytes)
 	{
 		result = errno != 0 ? errno : EIO;
 		logError("file: "__FILE__", line: %d, " \
@@ -807,7 +805,7 @@ int dio_check_trunk_file_ex(int fd, const char *filename, const int64_t offset)
 	char old_header[FDFS_TRUNK_FILE_HEADER_SIZE];
 	char expect_header[FDFS_TRUNK_FILE_HEADER_SIZE];
 
-	if (read(fd, old_header, FDFS_TRUNK_FILE_HEADER_SIZE) != 
+	if (fc_safe_read(fd, old_header, FDFS_TRUNK_FILE_HEADER_SIZE) !=
 		FDFS_TRUNK_FILE_HEADER_SIZE)
 	{
 		result = errno != 0 ? errno : EIO;
@@ -903,7 +901,7 @@ int dio_write_chunk_header(struct fast_task_info *pTask)
 	}
 	*/
 
-	if (write(pFileContext->fd, header, FDFS_TRUNK_FILE_HEADER_SIZE) != \
+	if (fc_safe_write(pFileContext->fd, header, FDFS_TRUNK_FILE_HEADER_SIZE) != \
 		FDFS_TRUNK_FILE_HEADER_SIZE)
 	{
 		result = errno != 0 ? errno : EIO;

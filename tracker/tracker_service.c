@@ -82,8 +82,8 @@ int tracker_service_init()
     init_connections = g_max_connections < ALLOC_CONNECTIONS_ONCE ?
         g_max_connections : ALLOC_CONNECTIONS_ONCE;
 	if ((result=free_queue_init_ex(g_max_connections, init_connections,
-                    ALLOC_CONNECTIONS_ONCE, TRACKER_MAX_PACKAGE_SIZE,
-                    TRACKER_MAX_PACKAGE_SIZE, sizeof(TrackerClientInfo))) != 0)
+                    ALLOC_CONNECTIONS_ONCE, g_min_buff_size,
+                    g_max_buff_size, sizeof(TrackerClientInfo))) != 0)
 	{
 		return result;
 	}
@@ -422,7 +422,6 @@ static int tracker_check_and_sync(struct fast_task_info *pTask, \
 			pClientInfo->pGroup->trunk_chg_count;
 		p = (char *)pDestServer;
 	}
-	}
 
 	if (pClientInfo->pStorage->chg_count != pClientInfo->pGroup->chg_count)
 	{
@@ -447,6 +446,7 @@ static int tracker_check_and_sync(struct fast_task_info *pTask, \
 		pClientInfo->pStorage->chg_count = \
 			pClientInfo->pGroup->chg_count;
 		p = (char *)pDestServer;
+	}
 	}
 
 	pTask->length = p - pTask->data;
@@ -510,7 +510,7 @@ static int tracker_changelog_response(struct fast_task_info *pTask, \
 		return result;
 	}
 
-	read_bytes = read(fd, pTask->data + sizeof(TrackerHeader), chg_len);
+	read_bytes = fc_safe_read(fd, pTask->data + sizeof(TrackerHeader), chg_len);
 	close(fd);
 
 	if (read_bytes != chg_len)
@@ -743,9 +743,19 @@ static int tracker_deal_storage_replica_chg(struct fast_task_info *pTask)
 	}
 
 	pTask->length = sizeof(TrackerHeader);
-	briefServers = (FDFSStorageBrief *)(pTask->data + sizeof(TrackerHeader));
-	return tracker_mem_sync_storages(((TrackerClientInfo *)pTask->arg)->pGroup, \
-				briefServers, server_count);
+    if (g_if_leader_self)
+    {
+        logDebug("file: "__FILE__", line: %d, " \
+                "client ip addr: %s, ignore storage info sync, "
+                "server_count: %d", __LINE__, pTask->client_ip, server_count);
+        return 0;
+    }
+    else
+    {
+        briefServers = (FDFSStorageBrief *)(pTask->data + sizeof(TrackerHeader));
+        return tracker_mem_sync_storages(((TrackerClientInfo *)pTask->arg)->pGroup,
+                briefServers, server_count);
+    }
 }
 
 static int tracker_deal_report_trunk_fid(struct fast_task_info *pTask)
@@ -1740,9 +1750,6 @@ static int tracker_deal_ping_leader(struct fast_task_info *pTask)
 
 static int tracker_deal_reselect_leader(struct fast_task_info *pTask)
 {
-	TrackerClientInfo *pClientInfo;
-	
-	pClientInfo = (TrackerClientInfo *)pTask->arg;
 	if (pTask->length - sizeof(TrackerHeader) != 0)
 	{
 		logError("file: "__FILE__", line: %d, " \
@@ -1995,24 +2002,27 @@ static int tracker_deal_get_one_sys_file(struct fast_task_info *pTask)
 	long2buff(file_stat.st_size, p);
 	p += FDFS_PROTO_PKG_LEN_SIZE;
 
-	bytes = read_bytes;
-	if (read_bytes > 0 && (result=getFileContentEx(full_filename, \
-					p, offset, &bytes)) != 0)
-	{
-		pTask->length = sizeof(TrackerHeader);
-		return result;
-	}
+    if (read_bytes > 0)
+    {
+        bytes = read_bytes + 1;
+        if ((result=getFileContentEx(full_filename, \
+                        p, offset, &bytes)) != 0)
+        {
+            pTask->length = sizeof(TrackerHeader);
+            return result;
+        }
 
-	if (bytes != read_bytes)
-	{
-		logError("file: "__FILE__", line: %d, " \
-			"client ip: %s, read bytes: %"PRId64
-			" != expect bytes: %"PRId64,  \
-			__LINE__, pTask->client_ip, bytes, read_bytes);
+        if (bytes != read_bytes)
+        {
+            logError("file: "__FILE__", line: %d, " \
+                    "client ip: %s, read bytes: %"PRId64
+                    " != expect bytes: %"PRId64,  \
+                    __LINE__, pTask->client_ip, bytes, read_bytes);
 
-		pTask->length = sizeof(TrackerHeader);
-		return EIO;
-	}
+            pTask->length = sizeof(TrackerHeader);
+            return EIO;
+        }
+    }
 
 	p += read_bytes;
 	pTask->length = p - pTask->data;
@@ -2955,6 +2965,8 @@ static int tracker_deal_server_list_all_groups(struct fast_task_info *pTask)
 	FDFSGroupInfo **ppEnd;
 	TrackerGroupStat *groupStats;
 	TrackerGroupStat *pDest;
+    int result;
+    int expect_size;
 
 	if (pTask->length - sizeof(TrackerHeader) != 0)
 	{
@@ -2968,6 +2980,30 @@ static int tracker_deal_server_list_all_groups(struct fast_task_info *pTask)
 		pTask->length = sizeof(TrackerHeader);
 		return EINVAL;
 	}
+
+    expect_size = sizeof(TrackerHeader) + g_groups.count * sizeof(TrackerGroupStat);
+    if (expect_size > g_min_buff_size)
+    {
+        if (expect_size <= g_max_buff_size)
+        {
+            if ((result=free_queue_set_buffer_size(pTask, expect_size)) != 0)
+            {
+                pTask->length = sizeof(TrackerHeader);
+                return result;
+            }
+        }
+        else
+        {
+            logError("file: "__FILE__", line: %d, "
+                    "cmd=%d, client ip: %s, "
+                    "expect buffer size: %d > max_buff_size: %d, "
+                    "you should increase max_buff_size in tracker.conf",
+                    __LINE__, TRACKER_PROTO_CMD_SERVER_LIST_ALL_GROUPS,
+                    pTask->client_ip, expect_size, g_max_buff_size);
+            pTask->length = sizeof(TrackerHeader);
+            return ENOSPC;
+        }
+    }
 
 	groupStats = (TrackerGroupStat *)(pTask->data + sizeof(TrackerHeader));
 	pDest = groupStats;
